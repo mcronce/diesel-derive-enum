@@ -37,8 +37,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let input: DeriveInput = parse_macro_input!(input as DeriveInput);
 
     let existing_mapping_path = val_from_attrs(&input.attrs, "ExistingTypePath");
-    if !cfg!(feature = "postgres") && existing_mapping_path.is_some() {
-        panic!("ExistingTypePath attribute only applies when the 'postgres' feature is enabled");
+    if !(cfg!(feature = "postgres") || cfg!(feature = "mysql")) && existing_mapping_path.is_some() {
+        panic!("ExistingTypePath attribute only applies when the 'postgres' or 'mysql' feature is enabled");
     }
 
     // we could allow a default value here but... I'm not very keen
@@ -218,7 +218,20 @@ fn generate_derive_enum_impls(
     };
 
     let mysql_impl = if cfg!(feature = "mysql") {
-        Some(generate_mysql_impl(new_diesel_mapping, enum_ty))
+        match existing_mapping_path {
+            Some(path) => {
+                let common_impls_on_existing_diesel_mapping = generate_common_impls(path, enum_ty);
+                let mysql_impl = generate_mysql_impl(path, enum_ty);
+                Some(quote! {
+                    #common_impls_on_existing_diesel_mapping
+                    #mysql_impl
+                })
+            }
+            None => Some(generate_mysql_impl(
+                &quote! { #new_diesel_mapping },
+                enum_ty
+            )),
+        }
     } else {
         None
     };
@@ -428,7 +441,7 @@ fn generate_postgres_impl(
     }
 }
 
-fn generate_mysql_impl(diesel_mapping: &Ident, enum_ty: &Ident) -> proc_macro2::TokenStream {
+fn generate_mysql_impl(diesel_mapping: &proc_macro2::TokenStream, enum_ty: &Ident) -> proc_macro2::TokenStream {
     quote! {
         mod mysql_impl {
             use super::*;
